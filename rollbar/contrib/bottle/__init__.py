@@ -20,7 +20,7 @@ class RollbarBottleReporter(object):
         def wrapper(*args, **kwargs):
             try:
                 return callback(*args, **kwargs)
-            except Exception, e:
+            except Exception as e:
                 rollbar.report_exc_info(sys.exc_info(), request=bottle.request)
                 raise
 
