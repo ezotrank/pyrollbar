@@ -47,14 +47,19 @@ try:
     from tornado.httpserver import HTTPRequest as TornadoRequest
 except ImportError:
     TornadoRequest = None
-    
+
+try:
+    from bottle import BaseRequest as BottleRequest
+except ImportError:
+    BottleRequest = None
+
 BASE_DATA_HOOK = None
 
 log = logging.getLogger(__name__)
 
 agent_log = None
 
-VERSION = '0.5.8'
+VERSION = '0.5.14'
 DEFAULT_ENDPOINT = 'https://api.rollbar.com/api/1/'
 DEFAULT_TIMEOUT = 3
 
@@ -66,6 +71,7 @@ SETTINGS = {
     'exception_level_filters': [],
     'root': None,  # root path to your code
     'branch': None,  # git branch name
+    'code_version': None,
     'handler': 'thread',  # 'blocking', 'thread' or 'agent'
     'endpoint': DEFAULT_ENDPOINT,
     'timeout': DEFAULT_TIMEOUT,
@@ -112,12 +118,12 @@ def init(access_token, environment='production', **kw):
 
 def report_exc_info(exc_info=None, request=None, extra_data=None, payload_data=None, **kw):
     """
-    Reports an exception to Rollbar, using exc_info (from calling sys.exc_info()) 
-    
+    Reports an exception to Rollbar, using exc_info (from calling sys.exc_info())
+
     exc_info: optional, should be the result of calling sys.exc_info(). If omitted, sys.exc_info() will be called here.
     request: optional, a WebOb or Werkzeug-based request object.
     extra_data: optional, will be included in the 'custom' section of the payload
-    payload_data: optional, dict that will override values in the final payload 
+    payload_data: optional, dict that will override values in the final payload
                   (e.g. 'level' or 'fingerprint')
     kw: provided for legacy purposes; unused.
 
@@ -131,7 +137,7 @@ def report_exc_info(exc_info=None, request=None, extra_data=None, payload_data=N
     """
     if exc_info is None:
         exc_info = sys.exc_info()
-    
+
     try:
         return _report_exc_info(exc_info, request, extra_data, payload_data)
     except Exception as e:
@@ -270,14 +276,14 @@ def _filtered_level(exception):
     for cls, level in SETTINGS['exception_level_filters']:
         if isinstance(exception, cls):
             return level
-    
+
     return None
 
 
 def _is_ignored(exception):
     return _filtered_level(exception) == 'ignored'
 
-    
+
 def _create_agent_log():
     """
     Creates .rollbar log file for use with rollbar-agent
@@ -287,7 +293,7 @@ def _create_agent_log():
         log.error("Provided agent log file does not end with .rollbar, which it must. "
             "Using default instead.")
         log_file = DEFAULTS['agent.log_file']
-    
+
     retval = logging.getLogger('rollbar_agent')
     handler = logging.FileHandler(log_file, 'a', 'utf-8')
     formatter = logging.Formatter('%(message)s')
@@ -308,9 +314,9 @@ def _report_exc_info(exc_info, request, extra_data, payload_data):
 
     if not _check_config():
         return
-    
+
     data = _build_base_data(request)
-    
+
     filtered_level = _filtered_level(exc)
     if filtered_level:
         data['level'] = filtered_level
@@ -338,7 +344,7 @@ def _report_exc_info(exc_info, request, extra_data, payload_data):
     _add_request_data(data, request)
     _add_person_data(data, request)
     data['server'] = _build_server_data()
-    
+
     if payload_data:
         data.update(payload_data)
 
@@ -397,10 +403,13 @@ def _build_base_data(request, level='error'):
         'notifier': SETTINGS['notifier'],
         'uuid': str(uuid.uuid4()),
     }
-    
+
+    if SETTINGS.get('code_version'):
+        data['code_version'] = SETTINGS['code_version']
+
     if BASE_DATA_HOOK:
         BASE_DATA_HOOK(request, data)
-    
+
     return data
 
 
@@ -464,11 +473,11 @@ def _build_person_data(request):
             user_id = user_id_prop()
         except TypeError:
             user_id = user_id_prop
-        
+
         if not user_id:
             return None
         return {'id': str(user_id)}
-    
+
 
 def _add_request_data(data, request):
     """
@@ -509,6 +518,10 @@ def _build_request_data(request):
     # tornado
     if TornadoRequest and isinstance(request, TornadoRequest):
         return _build_tornado_request_data(request)
+
+    #bottle
+    if BottleRequest and isinstance(request, BottleRequest):
+        return _build_bottle_request_data(request)
 
     return None
 
@@ -551,14 +564,14 @@ def _scrub_request_params(params, replacement_character='*'):
     """
     scrub_fields = set(SETTINGS['scrub_fields'])
     params = dict(params)
-    
-    for k, v in list(params.items()):
+
+    for k, v in params.items():
         if k.lower() in scrub_fields:
             if isinstance(v, list):
                 params[k] = [replacement_character * len(x) for x in v]
             else:
                 params[k] = replacement_character * len(v)
-    
+
     return params
 
 
@@ -608,7 +621,7 @@ def _build_werkzeug_request_data(request):
     request_data = {
         'url': request.url,
         'GET': dict(request.args),
-        'POST': dict(request.form),
+        'POST': dict(request.get_json() or request.form),
         'user_ip': _extract_user_ip(request),
         'headers': dict(request.headers),
         'method': request.method,
@@ -630,6 +643,17 @@ def _build_tornado_request_data(request):
 
     return request_data
 
+def _build_bottle_request_data(request):
+    request_data = {
+        'url': request.url,
+        'user_ip': request.remote_addr,
+        'headers': dict(request.headers),
+        'method': request.method,
+        'GET': dict(request.query),
+        'POST': dict(request.forms),
+    }
+
+    return request_data
 
 def _build_server_data():
     """
@@ -638,6 +662,7 @@ def _build_server_data():
     # server environment
     server_data = {
         'host': socket.gethostname(),
+        'argv': sys.argv
     }
 
     for key in ['branch', 'root']:
@@ -686,13 +711,13 @@ def _parse_response(path, access_token, params, resp):
     elif resp.status_code != 200:
         log.warning("Got unexpected status code from Rollbar api: %s\nResponse:\n%s",
             resp.status_code, resp.text)
-    
+
     try:
         data = resp.text
     except Exception as e:
         data = resp.content
         log.error('resp.text is undefined, resp.content is %r', resp.content)
-    
+
     try:
         json_data = json.loads(data)
     except (TypeError, ValueError):

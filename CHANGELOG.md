@@ -1,5 +1,25 @@
 # Change Log
 
+**0.5.14**
+- Fix bug with non-JSON post data in Flask
+- Add slightly better integration with Flask. See [rollbar-flask-example](https://github.com/rollbar/rollbar-flask-example) for example usage.
+
+**0.5.13**
+- Collect JSON post data in Flask when mimetype is `application/json`
+
+**0.5.12**
+- Add sys.argv to server data
+
+**0.5.11**
+- Don't report bottle.BaseResponse exceptions in the bottle plugin
+
+**0.5.10**
+- Added `code_version` configuration setting
+- Added support for bottle request objects
+
+**0.5.9**
+- Added a command line interface for reporting messages to Rollbar
+
 **0.5.8**
 - Added `allow_logging_basic_config` config flag for compatability with Flask. If using Flask, set to False.
 
