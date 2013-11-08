@@ -632,6 +632,15 @@ def _build_werkzeug_request_data(request):
 
 
 def _build_tornado_request_data(request):
+    def to_unicode(data):
+        try:
+            for key, value in data.items():
+                if isinstance(value, list) and len(value) == 1:
+                    data[key] = value[0].decode('UTF-8')
+            return data
+        except:
+            data
+
     request_data = {
         'url': request.full_url(),
         'user_ip': request.remote_ip,
@@ -639,8 +648,7 @@ def _build_tornado_request_data(request):
         'method': request.method,
         'files_keys': list(request.files.keys()),
     }
-    request_data[request.method] = request.arguments
-
+    request_data[request.method] = to_unicode(request.arguments)
     return request_data
 
 def _build_bottle_request_data(request):
