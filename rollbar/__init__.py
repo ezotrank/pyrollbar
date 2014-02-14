@@ -10,6 +10,9 @@ import sys
 import threading
 import time
 import traceback
+from tornado.gen import coroutine
+from tornado.httpclient import AsyncHTTPClient, HTTPResponse
+
 try:
     # Python 3
     import urllib.parse as urlparse
@@ -118,7 +121,7 @@ SETTINGS = {
     'root': None,  # root path to your code
     'branch': None,  # git branch name
     'code_version': None,
-    'handler': 'thread',  # 'blocking', 'thread' or 'agent'
+    'handler': 'async',  # 'blocking', 'thread' or 'agent'
     'endpoint': DEFAULT_ENDPOINT,
     'timeout': DEFAULT_TIMEOUT,
     'agent.log_file': 'log.rollbar',
@@ -220,6 +223,8 @@ def send_payload(payload):
         _send_payload(payload)
     elif handler == 'agent':
         agent_log.error(json.dumps(payload))
+    elif handler == 'async':
+        _send_payload_async(payload)
     else:
         # default to 'thread'
         thread = threading.Thread(target=_send_payload, args=(payload,))
@@ -764,6 +769,20 @@ def _send_payload(payload):
     except Exception as e:
         log.exception('Exception while posting item %r', e)
 
+@coroutine
+def _send_payload_async(payload):
+    try:
+        yield _post_api_async('item/', payload)
+    except Exception as e:
+        log.exception('Exception while posting item %r', e)
+
+@coroutine
+def _post_api_async(path, payload):
+    url = urlparse.urljoin(SETTINGS['endpoint'], path)
+    resp = yield AsyncHTTPClient().fetch(
+        url, body=payload, method='POST', connect_timeout=SETTINGS.get('timeout', DEFAULT_TIMEOUT), request_timeout=SETTINGS.get('timeout', DEFAULT_TIMEOUT)
+    )
+    return _parse_response(path, SETTINGS['access_token'], payload, resp)
 
 def _post_api(path, payload):
     url = urlparse.urljoin(SETTINGS['endpoint'], path)
@@ -780,18 +799,24 @@ def _get_api(path, access_token=None, **params):
 
 
 def _parse_response(path, access_token, params, resp):
-    if resp.status_code == 429:
+    try:
+        if isinstance(resp, HTTPResponse):
+            status = resp.code
+            data = resp.body.decode('UTF-8')
+        else:
+            status = resp.status_code
+            data = resp.text
+    except Exception as e:
+        log.warning("Rollbar: something wrong, can't parse reponse: %r\n", response)
+
+    if status == 429:
         log.warning("Rollbar: over rate limit, data was dropped. Payload was: %r", params)
         return
-    elif resp.status_code != 200:
+    elif status != 200:
         log.warning("Got unexpected status code from Rollbar api: %s\nResponse:\n%s",
-            resp.status_code, resp.text)
-
-    try:
-        data = resp.text
-    except Exception as e:
-        data = resp.content
-        log.error('resp.text is undefined, resp.content is %r', resp.content)
+            status, data)
+    elif status == 200:
+        log.info("Rollbar: status %s and body: %s\n", status, data)
 
     try:
         json_data = json.loads(data)
