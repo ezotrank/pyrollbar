@@ -2,15 +2,18 @@
 Integration with Flask
 """
 
-import sys
-
 from flask import request
 import rollbar
 
 
 def report_exception(app, exception):
-    payload_data = {
-        'framework': 'Flask',
-    }
-    rollbar.report_exc_info(sys.exc_info(), request, payload_data=payload_data)
-    
+    rollbar.report_exc_info(request=request)
+
+
+def _hook(request, data):
+    data['framework'] = 'flask'
+
+    if request:
+        data['context'] = str(request.url_rule)
+
+rollbar.BASE_DATA_HOOK = _hook

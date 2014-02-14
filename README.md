@@ -119,6 +119,11 @@ root = %(here)s
 
 Unfortunately, the Rollbar tween and the Rollbar filter configurations contains duplicated information. We'll look into fixing this in future versions.
 
+### Flask
+
+Check out [rollbar-flask-example](https://github.com/rollbar/rollbar-flask-example).
+
+
 ### Bottle
 
 Import the plugin and install!
@@ -160,7 +165,7 @@ Other options can be passed as keyword arguments. See the reference below for al
 
 ### Command-line usage
 
-pyrollbar 0.5.9 comes with a command-line tool that can be used with other UNIX utilities to create an ad-hoc monitoring solution.
+pyrollbar comes with a command-line tool that can be used with other UNIX utilities to create an ad-hoc monitoring solution.
 
 e.g. Report all 5xx haproxy requests as ```warning```
 
@@ -273,8 +278,11 @@ WSGIServer(('', 8000), application).serve_forever()
 
   <dl>
   <dt>access_token</dt>
-  <dd>Access token from your Rollbar project handler
-
+  <dd>Access token from your Rollbar project
+  </dd>
+  <dt>handler</dt>
+  <dd>The method for reporting rollbar items to api.rollbar.com
+  
 One of:
 
 - blocking -- runs in main thread

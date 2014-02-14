@@ -16,6 +16,15 @@ class RollbarBottleReporter(object):
 
         rollbar.init(*args, **kwargs)
 
+        def hook(request, data):
+            data['framework'] = 'bottle'
+
+            if request:
+                route = request['bottle.route']
+                data['context'] = route.name or route.rule
+
+        rollbar.BASE_DATA_HOOK = hook
+
     def __call__(self, callback):
         def wrapper(*args, **kwargs):
             try:
@@ -25,3 +34,5 @@ class RollbarBottleReporter(object):
                 raise
 
         return wrapper
+
+

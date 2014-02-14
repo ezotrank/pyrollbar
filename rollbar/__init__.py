@@ -22,6 +22,7 @@ import uuid
 
 import requests
 
+
 # import request objects from various frameworks, if available
 try:
     from webob import BaseRequest as WebobBaseRequest
@@ -53,13 +54,58 @@ try:
 except ImportError:
     BottleRequest = None
 
+
+def get_request():
+    """
+    Get the current request object. Implementation varies on
+    library support. Modified below when we know which framework
+    is being used.
+    """
+
+    # TODO(cory): add in a generic _get_locals_request() which
+    # will iterate up through the call stack and look for a variable
+    # that appears to be valid request object.
+    for fn in (_get_bottle_request,
+               _get_flask_request,
+               _get_pyramid_request,
+               _get_pylons_request):
+        try:
+            req = fn()
+            if req is not None:
+                return req
+        except:
+            pass
+
+    return None
+
+
+def _get_bottle_request():
+    from bottle import request
+    return request
+
+
+def _get_flask_request():
+    from flask import request
+    return request
+
+
+def _get_pyramid_request():
+    from pyramid.threadlocal import get_current_request
+    return get_current_request()
+
+
+def _get_pylons_request():
+    from pylons import request
+    return request
+
+
 BASE_DATA_HOOK = None
 
 log = logging.getLogger(__name__)
 
 agent_log = None
 
-VERSION = '0.5.14'
+VERSION = '0.6.2'
 DEFAULT_ENDPOINT = 'https://api.rollbar.com/api/1/'
 DEFAULT_TIMEOUT = 3
 
@@ -155,7 +201,7 @@ def report_message(message, level='error', request=None, extra_data=None, payloa
     payload_data: param names to pass in the 'data' level of the payload; overrides defaults.
     """
     try:
-        _report_message(message, level, request, extra_data, payload_data)
+        return _report_message(message, level, request, extra_data, payload_data)
     except Exception as e:
         log.exception("Exception while reporting message to Rollbar. %r", e)
 
@@ -346,7 +392,7 @@ def _report_exc_info(exc_info, request, extra_data, payload_data):
     data['server'] = _build_server_data()
 
     if payload_data:
-        data.update(payload_data)
+        data = dict_merge(data, payload_data)
 
     payload = _build_payload(data)
     send_payload(payload)
@@ -378,7 +424,7 @@ def _report_message(message, level, request, extra_data, payload_data):
     data['server'] = _build_server_data()
 
     if payload_data:
-        data.update(payload_data)
+        data = dict_merge(data, payload_data)
 
     payload = _build_payload(data)
     send_payload(payload)
@@ -513,13 +559,13 @@ def _build_request_data(request):
 
     if WerkzeugLocalProxy and isinstance(request, WerkzeugLocalProxy):
         actual_request = request._get_current_object()
-        return _build_werkzeug_request_data(request)
+        return _build_werkzeug_request_data(actual_request)
 
     # tornado
     if TornadoRequest and isinstance(request, TornadoRequest):
         return _build_tornado_request_data(request)
 
-    #bottle
+    # bottle
     if BottleRequest and isinstance(request, BottleRequest):
         return _build_bottle_request_data(request)
 
@@ -583,6 +629,12 @@ def _build_webob_request_data(request):
         'headers': dict(request.headers),
     }
 
+    try:
+        if request.json:
+            request_data['body'] = request.body
+    except:
+        pass
+
     # pyramid matchdict
     if getattr(request, 'matchdict', None):
         request_data['params'] = request.matchdict
@@ -606,6 +658,11 @@ def _build_django_request_data(request):
         'user_ip': _django_extract_user_ip(request),
     }
 
+    try:
+        request_data['body'] = request.body
+    except:
+        pass
+
     # headers
     headers = {}
     for k, v in request.environ.items():
@@ -621,12 +678,15 @@ def _build_werkzeug_request_data(request):
     request_data = {
         'url': request.url,
         'GET': dict(request.args),
-        'POST': dict(request.get_json() or request.form),
+        'POST': dict(request.form),
         'user_ip': _extract_user_ip(request),
         'headers': dict(request.headers),
         'method': request.method,
         'files_keys': list(request.files.keys()),
     }
+
+    if request.get_json():
+        request_data['body'] = request.data
 
     return request_data
 
@@ -657,9 +717,16 @@ def _build_bottle_request_data(request):
         'user_ip': request.remote_addr,
         'headers': dict(request.headers),
         'method': request.method,
-        'GET': dict(request.query),
-        'POST': dict(request.forms),
+        'GET': dict(request.query)
     }
+
+    if request.json:
+        try:
+            request_data['body'] = request.body.getvalue()
+        except:
+            pass
+    else:
+        request_data['POST'] = dict(request.forms)
 
     return request_data
 
@@ -762,6 +829,22 @@ def _django_extract_user_ip(request):
     if real_ip:
         return real_ip
     return request.environ['REMOTE_ADDR']
+
+
+# http://www.xormedia.com/recursively-merge-dictionaries-in-python.html
+def dict_merge(a, b):
+    '''recursively merges dict's. not just simple a['key'] = b['key'], if
+    both a and bhave a key who's value is a dict then dict_merge is called
+    on both values and the result stored in the returned dictionary.'''
+    if not isinstance(b, dict):
+        return b
+    result = copy.deepcopy(a)
+    for k, v in b.iteritems():
+        if k in result and isinstance(result[k], dict):
+            result[k] = dict_merge(result[k], v)
+        else:
+            result[k] = copy.deepcopy(v)
+    return result
 
 
 class ErrorIgnoringJSONEncoder(json.JSONEncoder):

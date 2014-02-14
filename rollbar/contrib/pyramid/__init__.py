@@ -112,6 +112,9 @@ def includeme(config):
         if request:
             request.environ['rollbar.uuid'] = data['uuid']
 
+            if request.matched_route:
+                data['context'] = request.matched_route.name
+
     rollbar.BASE_DATA_HOOK = hook
 
     kw = parse_settings(settings)
